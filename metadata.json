@@ -1,0 +1,11 @@
+{
+  "name": "Ascend — AI Research & Knowledge Discovery",
+  "description": "Immersive 3D AI research assistant and knowledge-discovery workspace that synthesizes peer-reviewed literature from arXiv and Semantic Scholar into structured briefings, grounded citations, interactive concept graphs, and exportable Markdown reports.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

@@ -1,0 +1,303 @@
+{
+  "entities": {
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Public non-PII researcher profile displayed on shared leaderboards and profile badges.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the profile owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Public display name of the researcher.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Optional avatar URL from Google Sign-In.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["uid", "displayName", "photoURL", "createdAt", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Strictly isolated PII record storing the user's verified email address.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Verified email address of the authenticated user.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["uid", "email", "updatedAt"]
+    },
+    "CloudBriefing": {
+      "title": "CloudBriefing",
+      "description": "Persisted scientific research briefing owned by a signed-in researcher.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the briefing creator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "query": {
+          "type": "string",
+          "description": "Research topic query string.",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "summary": {
+          "type": "string",
+          "description": "Executive synthesis summary.",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "background": {
+          "type": "string",
+          "description": "Background section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "keyMethods": {
+          "type": "string",
+          "description": "Key methods section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "recentFindings": {
+          "type": "string",
+          "description": "Recent findings section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "openQuestions": {
+          "type": "string",
+          "description": "Open questions section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "sourceLinks": {
+          "type": "array",
+          "description": "Bounded list (max 6) of formatted citation strings."
+        },
+        "conceptNodes": {
+          "type": "array",
+          "description": "Bounded list (max 10) of concept graph node labels."
+        },
+        "saved": {
+          "type": "boolean",
+          "description": "Whether the researcher starred this briefing."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": [
+        "ownerId",
+        "query",
+        "summary",
+        "background",
+        "keyMethods",
+        "recentFindings",
+        "openQuestions",
+        "sourceLinks",
+        "conceptNodes",
+        "saved",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "ChatThread": {
+      "title": "ChatThread",
+      "description": "Parent metadata document for a researcher's multi-turn AI conversation.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the conversation owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "title": {
+          "type": "string",
+          "description": "Short topic label for the thread.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "model": {
+          "type": "string",
+          "description": "Selected Gemini model identifier.",
+          "enum": ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-4-argon"],
+          "minLength": 5,
+          "maxLength": 40
+        },
+        "turnCount": {
+          "type": "integer",
+          "description": "Number of exchanges recorded in this thread."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp."
+        }
+      },
+      "required": ["ownerId", "title", "model", "turnCount", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Individual turn message stored in the subcollection under a ChatThread.",
+      "type": "object",
+      "properties": {
+        "chatId": {
+          "type": "string",
+          "description": "Parent ChatThread document ID.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the thread owner.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "role": {
+          "type": "string",
+          "description": "Speaker role in the conversation.",
+          "enum": ["user", "model"],
+          "minLength": 4,
+          "maxLength": 10
+        },
+        "content": {
+          "type": "string",
+          "description": "Plain-text message body.",
+          "minLength": 1,
+          "maxLength": 8000
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": ["chatId", "ownerId", "role", "content", "createdAt"]
+    },
+    "OrbitalScore": {
+      "title": "OrbitalScore",
+      "description": "Immutable completed mission score from the 3D Orbital Kessler Vector simulation.",
+      "type": "object",
+      "properties": {
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the pilot.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "pilotName": {
+          "type": "string",
+          "description": "Public callsign of the pilot (non-PII).",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "score": {
+          "type": "integer",
+          "description": "Final mission score bounded to [0, 1000000]."
+        },
+        "wave": {
+          "type": "integer",
+          "description": "Highest orbital wave reached bounded to [1, 99]."
+        },
+        "status": {
+          "type": "string",
+          "description": "Terminal mission outcome state.",
+          "enum": ["completed"],
+          "minLength": 9,
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp."
+        }
+      },
+      "required": ["ownerId", "pilotName", "score", "wave", "status", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public researcher profile keyed by Firebase Auth UID."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Split-collection PII vault restricted strictly to the profile owner."
+    },
+    "/briefings/{briefingId}": {
+      "schema": { "$ref": "#/entities/CloudBriefing" },
+      "description": "Cloud-synced research briefings restricted strictly to their ownerId."
+    },
+    "/chats/{chatId}": {
+      "schema": { "$ref": "#/entities/ChatThread" },
+      "description": "Multi-turn research chat threads restricted strictly to their ownerId."
+    },
+    "/chats/{chatId}/messages/{messageId}": {
+      "schema": { "$ref": "#/entities/ChatMessage" },
+      "description": "Subcollection of chat messages gated by parent ChatThread ownership."
+    },
+    "/scores/{scoreId}": {
+      "schema": { "$ref": "#/entities/OrbitalScore" },
+      "description": "Immutable completed 3D orbital mission scores."
+    }
+  }
+}

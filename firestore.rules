@@ -1,0 +1,380 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // =========================================================================
+    // 0. GLOBAL DEFAULT-DENY SAFETY NET (MUST REMAIN FIRST)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // 1. HARDENED PRIMITIVE HELPERS
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isBoundedStringList(arr, maxItems, maxFirstLen) {
+      return arr is list
+        && arr.size() <= maxItems
+        && (arr.size() == 0 || (arr[0] is string && arr[0].size() <= maxFirstLen));
+    }
+
+    // =========================================================================
+    // 2. ENTITY VALIDATION BLUEPRINTS (Pillar 2 — Anti-Update-Gap)
+    // =========================================================================
+    function isValidUserPublicProfile(data) {
+      return data.keys().hasAll(['uid', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'photoURL', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 80
+        && data.photoURL is string
+        && data.photoURL.size() <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivateInfo(data) {
+      return data.keys().hasAll(['uid', 'email', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 160
+        && data.email == request.auth.token.email
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCloudBriefing(data) {
+      return data.keys().hasAll([
+          'ownerId',
+          'query',
+          'summary',
+          'background',
+          'keyMethods',
+          'recentFindings',
+          'openQuestions',
+          'sourceLinks',
+          'conceptNodes',
+          'saved',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId',
+          'query',
+          'summary',
+          'background',
+          'keyMethods',
+          'recentFindings',
+          'openQuestions',
+          'sourceLinks',
+          'conceptNodes',
+          'saved',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.query is string
+        && data.query.size() >= 3
+        && data.query.size() <= 200
+        && data.summary is string
+        && data.summary.size() >= 1
+        && data.summary.size() <= 3000
+        && data.background is string
+        && data.background.size() >= 1
+        && data.background.size() <= 2400
+        && data.keyMethods is string
+        && data.keyMethods.size() >= 1
+        && data.keyMethods.size() <= 2400
+        && data.recentFindings is string
+        && data.recentFindings.size() >= 1
+        && data.recentFindings.size() <= 2400
+        && data.openQuestions is string
+        && data.openQuestions.size() >= 1
+        && data.openQuestions.size() <= 2400
+        && isBoundedStringList(data.sourceLinks, 6, 400)
+        && isBoundedStringList(data.conceptNodes, 10, 80)
+        && data.saved is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatThread(data) {
+      return data.keys().hasAll(['ownerId', 'title', 'model', 'turnCount', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['ownerId', 'title', 'model', 'turnCount', 'createdAt', 'updatedAt'])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.title is string
+        && data.title.size() >= 1
+        && data.title.size() <= 120
+        && data.model is string
+        && data.model.size() >= 5
+        && data.model.size() <= 40
+        && data.model in ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-4-argon']
+        && data.turnCount is int
+        && data.turnCount >= 1
+        && data.turnCount <= 500
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data, chatId) {
+      return data.keys().hasAll(['chatId', 'ownerId', 'role', 'content', 'createdAt'])
+        && data.keys().hasOnly(['chatId', 'ownerId', 'role', 'content', 'createdAt'])
+        && data.chatId is string
+        && data.chatId == chatId
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.role is string
+        && data.role.size() >= 4
+        && data.role.size() <= 10
+        && data.role in ['user', 'model']
+        && data.content is string
+        && data.content.size() >= 1
+        && data.content.size() <= 8000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidOrbitalScore(data) {
+      return data.keys().hasAll(['ownerId', 'pilotName', 'score', 'wave', 'status', 'createdAt'])
+        && data.keys().hasOnly(['ownerId', 'pilotName', 'score', 'wave', 'status', 'createdAt'])
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.pilotName is string
+        && data.pilotName.size() >= 1
+        && data.pilotName.size() <= 40
+        && data.score is int
+        && data.score >= 0
+        && data.score <= 1000000
+        && data.wave is int
+        && data.wave >= 1
+        && data.wave <= 99
+        && data.status is string
+        && data.status.size() >= 9
+        && data.status.size() <= 20
+        && data.status == 'completed'
+        && data.createdAt is timestamp;
+    }
+
+    // =========================================================================
+    // 3. COLLECTION MATCH BLOCKS
+    // =========================================================================
+
+    // Public Researcher Profile (Zero PII)
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && isOwner(userId);
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserPublicProfile(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserPublicProfile(incoming())
+        && isOwner(userId)
+        && existing().uid == request.auth.uid
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']);
+
+      allow delete: if false;
+
+      // Split Collection PII Vault (Strictly Owner-Only + Atomicity Gate)
+      match /private/{docId} {
+        allow get: if isSignedIn()
+          && isValidId(userId)
+          && isValidId(docId)
+          && docId == 'info'
+          && isOwner(userId)
+          && exists(/databases/$(database)/documents/users/$(userId));
+
+        allow list: if false;
+
+        allow create: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(docId)
+          && docId == 'info'
+          && isOwner(userId)
+          && isValidUserPrivateInfo(incoming())
+          && incoming().updatedAt == request.time
+          && existsAfter(/databases/$(database)/documents/users/$(userId));
+
+        allow update: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(docId)
+          && isValidUserPrivateInfo(incoming())
+          && docId == 'info'
+          && isOwner(userId)
+          && incoming().uid == existing().uid
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt'])
+          && exists(/databases/$(database)/documents/users/$(userId));
+
+        allow delete: if false;
+      }
+    }
+
+    // Cloud-Synced Research Briefings
+    match /briefings/{briefingId} {
+      allow get: if isSignedIn()
+        && isValidId(briefingId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(briefingId)
+        && isValidCloudBriefing(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(briefingId)
+        && isValidCloudBriefing(incoming())
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action 1: Toggle star / saved state
+          incoming().diff(existing()).affectedKeys().hasOnly(['saved', 'updatedAt'])
+          ||
+          // Action 2: Refresh briefing synthesis content
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'summary',
+            'background',
+            'keyMethods',
+            'recentFindings',
+            'openQuestions',
+            'sourceLinks',
+            'conceptNodes',
+            'saved',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isVerifiedUser()
+        && isValidId(briefingId)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // Multi-Turn Research Chat Threads
+    match /chats/{chatId} {
+      allow get: if isSignedIn()
+        && isValidId(chatId)
+        && existing().ownerId == request.auth.uid;
+
+      allow list: if isSignedIn()
+        && resource.data.ownerId == request.auth.uid;
+
+      allow create: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidChatThread(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(chatId)
+        && isValidChatThread(incoming())
+        && existing().ownerId == request.auth.uid
+        && incoming().ownerId == existing().ownerId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'model', 'turnCount', 'updatedAt']);
+
+      allow delete: if isVerifiedUser()
+        && isValidId(chatId)
+        && existing().ownerId == request.auth.uid;
+
+      // Subcollection for Chat Messages (Pillar 1 Master Gate Relational Sync)
+      match /messages/{messageId} {
+        allow get: if isSignedIn()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && existing().ownerId == request.auth.uid
+          && get(/databases/$(database)/documents/chats/$(chatId)).data.ownerId == request.auth.uid;
+
+        allow list: if isSignedIn()
+          && resource.data.ownerId == request.auth.uid;
+
+        allow create: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && isValidChatMessage(incoming(), chatId)
+          && incoming().createdAt == request.time
+          && existsAfter(/databases/$(database)/documents/chats/$(chatId))
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.ownerId == request.auth.uid;
+
+        allow update: if false;
+
+        allow delete: if isVerifiedUser()
+          && isValidId(chatId)
+          && isValidId(messageId)
+          && existing().ownerId == request.auth.uid
+          && get(/databases/$(database)/documents/chats/$(chatId)).data.ownerId == request.auth.uid;
+      }
+    }
+
+    // Immutable 3D Orbital Simulation Leaderboard Scores (Zero PII)
+    match /scores/{scoreId} {
+      allow get: if isSignedIn()
+        && isValidId(scoreId)
+        && existing().status == 'completed';
+
+      allow list: if isSignedIn()
+        && resource.data.status == 'completed'
+        && request.query.limit <= 20;
+
+      allow create: if isVerifiedUser()
+        && isValidId(scoreId)
+        && isValidOrbitalScore(incoming())
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+
+      allow delete: if isVerifiedUser()
+        && isValidId(scoreId)
+        && existing().ownerId == request.auth.uid;
+    }
+  }
+}
