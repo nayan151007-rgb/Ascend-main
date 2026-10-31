@@ -15,7 +15,7 @@ import {
 } from 'lucide-react';
 import { recordChatExchangeToCloud, type User } from '../lib/firebase';
 
-type HubTab = 'chat' | 'live' | 'search' | 'maps';
+export type HubTab = 'chat' | 'live' | 'search' | 'maps';
 type ChatModelId = 'gemini-3.8-flash' | 'gemini-3.1-flash-lite' | 'gemini-4-argon';
 
 interface ChatMessageItem {
@@ -29,6 +29,7 @@ interface ResearchAssistantHubProps {
   activeTopic: string;
   currentUser: User | null;
   onTranscribeToWorkspace?: (transcript: string) => void;
+  requestedTab?: { tab: HubTab; seq: number } | null;
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
@@ -54,8 +55,15 @@ export default function ResearchAssistantHub({
   activeTopic,
   currentUser,
   onTranscribeToWorkspace,
+  requestedTab,
 }: ResearchAssistantHubProps) {
   const [activeTab, setActiveTab] = useState<HubTab>('chat');
+
+  useEffect(() => {
+    if (requestedTab) {
+      setActiveTab(requestedTab.tab);
+    }
+  }, [requestedTab]);
 
   // -------------------------------------------------------------------------
   // TAB 1: Multi-Turn Chat + Mic Audio Transcription (`gemini-3.5-transcribe`)

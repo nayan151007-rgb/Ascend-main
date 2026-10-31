@@ -55,3 +55,7 @@
   - Relational Sync: Enforced via `get(/databases/$(database)/documents/chats/$(chatId)).data.ownerId == request.auth.uid`.
 - **`/scores/{scoreId}`**:
   - State Shortcutting / Tampering: Blocked (`status == 'completed'`, `score >= 0 && score <= 1000000`, `allow update: if false`).
+- **`/shares/{shareId}`**:
+  - Link Enumeration / Scraping: Blocked (`allow list: if false;`, direct `get` requires exact `shareId` matching `^sh-[a-z0-9]{8,24}$`).
+  - Snapshot Tampering: Blocked (`allow update: if false;`, immutable snapshot verified by `isValidSharedBriefing(incoming(), shareId)` and `incoming().createdAt == request.time`).
+  - PII Exposure: Zero PII (`email`, `displayName`, `photoURL` forbidden by `hasOnly`).

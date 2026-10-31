@@ -1,4 +1,4 @@
-import { useState, ChangeEvent, FormEvent } from 'react';
+import { useState, useEffect, ChangeEvent, FormEvent } from 'react';
 import {
   Image as ImageIcon,
   Film,
@@ -9,10 +9,11 @@ import {
   X,
 } from 'lucide-react';
 
-type StudioMode = 'image' | 'video';
+export type StudioMode = 'image' | 'video';
 
 interface MediaStudioPanelProps {
   activeTopic: string;
+  requestedMode?: { mode: StudioMode; seq: number } | null;
 }
 
 function readFileAsBase64(file: File): Promise<{ base64: string; mimeType: string; previewUrl: string }> {
@@ -36,8 +37,14 @@ function readFileAsBase64(file: File): Promise<{ base64: string; mimeType: strin
   });
 }
 
-export default function MediaStudioPanel({ activeTopic }: MediaStudioPanelProps) {
+export default function MediaStudioPanel({ activeTopic, requestedMode }: MediaStudioPanelProps) {
   const [studioMode, setStudioMode] = useState<StudioMode>('image');
+
+  useEffect(() => {
+    if (requestedMode) {
+      setStudioMode(requestedMode.mode);
+    }
+  }, [requestedMode]);
 
   // -------------------------------------------------------------------------
   // Image Studio State (`gemini-nano-banana-2.1`)

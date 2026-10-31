@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -119,6 +120,11 @@ function initDatabase(): Database.Database {
           cid TEXT PRIMARY KEY,
           data TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS shares (
+          id TEXT PRIMARY KEY,
+          payload TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
       `);
       return sqlite;
     } catch {
@@ -126,7 +132,10 @@ function initDatabase(): Database.Database {
     }
   }
   const memDb = new Database(':memory:');
-  memDb.exec('CREATE TABLE IF NOT EXISTS lib (cid TEXT PRIMARY KEY, data TEXT NOT NULL);');
+  memDb.exec(`
+    CREATE TABLE IF NOT EXISTS lib (cid TEXT PRIMARY KEY, data TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at TEXT NOT NULL);
+  `);
   return memDb;
 }
 
@@ -134,6 +143,10 @@ const db = initDatabase();
 const getLibStmt = db.prepare('SELECT data FROM lib WHERE cid = ?');
 const putLibStmt = db.prepare(
   'INSERT INTO lib (cid, data) VALUES (?, ?) ON CONFLICT(cid) DO UPDATE SET data = excluded.data'
+);
+const getShareStmt = db.prepare('SELECT payload, created_at FROM shares WHERE id = ?');
+const putShareStmt = db.prepare(
+  'INSERT INTO shares (id, payload, created_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET payload = excluded.payload'
 );
 
 // ---------------------------------------------------------------------------
@@ -1086,6 +1099,131 @@ async function startServer() {
       res.json(req.body);
     } catch {
       res.status(500).json({ detail: 'Failed to persist research library to SQLite.' });
+    }
+  });
+
+  // Persistent Research Share Link Creation (`POST /api/shares`)
+  app.post('/api/shares', (req: Request, res: Response) => {
+    const ip = getClientIp(req);
+    if (!checkBucketRateLimit(interactiveHits, `share:${ip}`, 30)) {
+      res.status(429).json({ detail: 'Too many share link requests. Please wait a moment and try again.' });
+      return;
+    }
+
+    const body = req.body as {
+      query?: unknown;
+      createdAt?: unknown;
+      summary?: unknown;
+      sections?: unknown;
+      sources?: unknown;
+      graph?: unknown;
+    } | null;
+
+    const queryText = typeof body?.query === 'string' ? body.query.trim().replace(/\s+/g, ' ') : '';
+    const summaryText = typeof body?.summary === 'string' ? body.summary.trim() : '';
+
+    if (queryText.length < 3 || queryText.length > 200) {
+      res.status(422).json({ detail: 'Shared briefing must include a valid research topic (3–200 chars).' });
+      return;
+    }
+    if (summaryText.length < 1 || summaryText.length > 5000) {
+      res.status(422).json({ detail: 'Shared briefing must include a non-empty synthesis summary.' });
+      return;
+    }
+
+    const rawSections = Array.isArray(body?.sections) ? body.sections.slice(0, 6) : [];
+    const sections: ResearchSection[] = rawSections
+      .filter((s): s is { title: unknown; body: unknown } => Boolean(s && typeof s === 'object'))
+      .map((s) => ({
+        title: String(s.title || 'Section').slice(0, 80),
+        body: String(s.body || '').slice(0, 3000),
+      }))
+      .filter((s) => s.body.length > 0);
+
+    const rawSources = Array.isArray(body?.sources) ? body.sources.slice(0, 8) : [];
+    const sources: ResearchSource[] = rawSources
+      .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object'))
+      .map((s) => ({
+        title: String(s.title || 'Untitled Manuscript').slice(0, 300),
+        authors: String(s.authors || 'Authors').slice(0, 200),
+        year: typeof s.year === 'number' && Number.isFinite(s.year) ? s.year : null,
+        url: typeof s.url === 'string' && /^https?:\/\//i.test(s.url) ? s.url.slice(0, 500) : 'https://arxiv.org',
+        source: String(s.source || 'Scholarly Index').slice(0, 80),
+        why: String(s.why || '').slice(0, 500),
+      }));
+
+    const rawGraph = body?.graph as { nodes?: unknown; edges?: unknown } | undefined;
+    const nodes = Array.isArray(rawGraph?.nodes)
+      ? rawGraph.nodes.slice(0, 12).map((n) => String(n || '').slice(0, 90)).filter(Boolean)
+      : [queryText];
+    const edges: [string, string, string][] = Array.isArray(rawGraph?.edges)
+      ? rawGraph.edges
+          .slice(0, 20)
+          .filter((e): e is [unknown, unknown, unknown] => Array.isArray(e) && e.length >= 3)
+          .map((e) => [
+            String(e[0] || '').slice(0, 90),
+            String(e[1] || '').slice(0, 90),
+            String(e[2] || 'relates to').slice(0, 60),
+          ])
+      : [];
+
+    const createdAtIso =
+      typeof body?.createdAt === 'string' && !Number.isNaN(Date.parse(body.createdAt))
+        ? new Date(body.createdAt).toISOString()
+        : new Date().toISOString();
+
+    const digest = crypto
+      .createHash('sha256')
+      .update(`${queryText.toLowerCase()}||${summaryText}`)
+      .digest('hex')
+      .slice(0, 12);
+    const shareId = `sh-${digest}`;
+
+    const snapshot = {
+      shareId,
+      query: queryText,
+      createdAt: createdAtIso,
+      summary: summaryText,
+      sections,
+      sources,
+      graph: {
+        nodes: nodes.length > 0 ? nodes : [queryText],
+        edges,
+      },
+    };
+
+    const serialized = JSON.stringify(snapshot);
+    if (Buffer.byteLength(serialized, 'utf8') > 256 * 1024) {
+      res.status(413).json({ detail: 'Shared briefing snapshot exceeds 256 KB limit.' });
+      return;
+    }
+
+    try {
+      putShareStmt.run(shareId, serialized, new Date().toISOString());
+      res.status(201).json({ shareId, createdAt: createdAtIso });
+    } catch {
+      res.status(500).json({ detail: 'Failed to save shared research link on server.' });
+    }
+  });
+
+  // Persistent Research Share Link Retrieval (`GET /api/shares/:shareId`)
+  app.get('/api/shares/:shareId', (req: Request, res: Response) => {
+    const shareId = String(req.params.shareId || '').trim().toLowerCase();
+    if (!/^sh-[a-z0-9]{8,24}$/.test(shareId)) {
+      res.status(400).json({ detail: 'Invalid shared research link identifier.' });
+      return;
+    }
+
+    try {
+      const row = getShareStmt.get(shareId) as { payload: string; created_at: string } | undefined;
+      if (!row) {
+        res.status(404).json({ detail: 'Shared research briefing link was not found.' });
+        return;
+      }
+      const parsed = JSON.parse(row.payload);
+      res.json(parsed);
+    } catch {
+      res.status(500).json({ detail: 'Could not read shared research briefing.' });
     }
   });
 

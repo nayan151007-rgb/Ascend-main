@@ -272,6 +272,89 @@
         }
       },
       "required": ["ownerId", "pilotName", "score", "wave", "status", "createdAt"]
+    },
+    "SharedBriefing": {
+      "title": "SharedBriefing",
+      "description": "Immutable, zero-PII shared research briefing snapshot accessible via its unique shareId link.",
+      "type": "object",
+      "properties": {
+        "shareId": {
+          "type": "string",
+          "description": "Content-addressed share link identifier matching sh-[a-z0-9]{8,24}.",
+          "minLength": 11,
+          "maxLength": 27,
+          "pattern": "^sh-[a-z0-9]{8,24}$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the researcher who published the shared snapshot.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "query": {
+          "type": "string",
+          "description": "Research topic query string.",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "summary": {
+          "type": "string",
+          "description": "Executive synthesis summary.",
+          "minLength": 1,
+          "maxLength": 3000
+        },
+        "background": {
+          "type": "string",
+          "description": "Background section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "keyMethods": {
+          "type": "string",
+          "description": "Key methods section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "recentFindings": {
+          "type": "string",
+          "description": "Recent findings section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "openQuestions": {
+          "type": "string",
+          "description": "Open questions section text.",
+          "minLength": 1,
+          "maxLength": 2400
+        },
+        "sourceLinks": {
+          "type": "array",
+          "description": "Bounded list (max 6) of formatted citation strings."
+        },
+        "conceptNodes": {
+          "type": "array",
+          "description": "Bounded list (max 10) of concept graph node labels."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable server creation timestamp."
+        }
+      },
+      "required": [
+        "shareId",
+        "ownerId",
+        "query",
+        "summary",
+        "background",
+        "keyMethods",
+        "recentFindings",
+        "openQuestions",
+        "sourceLinks",
+        "conceptNodes",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -298,6 +381,10 @@
     "/scores/{scoreId}": {
       "schema": { "$ref": "#/entities/OrbitalScore" },
       "description": "Immutable completed 3D orbital mission scores."
+    },
+    "/shares/{shareId}": {
+      "schema": { "$ref": "#/entities/SharedBriefing" },
+      "description": "Immutable shared research briefing snapshots keyed by shareId (list disabled)."
     }
   }
 }

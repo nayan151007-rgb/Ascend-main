@@ -19,15 +19,19 @@ import {
   LogIn,
   LogOut,
   Cloud,
+  Share2,
+  LayoutGrid,
+  Link2,
 } from 'lucide-react';
 import EarthCanvas from './components/EarthCanvas';
 import KnowledgeGraphSvg from './components/KnowledgeGraphSvg';
 import ShowcaseSection from './components/ShowcaseSection';
 import OrbitalObservatory3D from './components/OrbitalObservatory3D';
 import BioscienceWorkbench from './components/BioscienceWorkbench';
-import ResearchAssistantHub from './components/ResearchAssistantHub';
-import MediaStudioPanel from './components/MediaStudioPanel';
+import ResearchAssistantHub, { type HubTab } from './components/ResearchAssistantHub';
+import MediaStudioPanel, { type StudioMode } from './components/MediaStudioPanel';
 import OrbitalDefenseGame from './components/OrbitalDefenseGame';
+import CommandDashboardDrawer from './components/CommandDashboardDrawer';
 import {
   auth,
   onAuthStateChanged,
@@ -36,6 +40,8 @@ import {
   upsertCloudBriefing,
   removeCloudBriefing,
   subscribeUserCloudBriefings,
+  publishSharedBriefingToCloud,
+  fetchSharedBriefingFromCloud,
   type CloudBriefingSummary,
   type User,
 } from './lib/firebase';
@@ -179,6 +185,25 @@ export default function App() {
   const [vaultInput, setVaultInput] = useState<string>('');
   const [copiedId, setCopiedId] = useState<boolean>(false);
 
+  // Top-Left Command Dashboard State
+  const [dashboardOpen, setDashboardOpen] = useState<boolean>(false);
+  const [dashboardPinned, setDashboardPinned] = useState<boolean>(false);
+  const [activeSectionId, setActiveSectionId] = useState<string>('top');
+  const [requestedHubTab, setRequestedHubTab] = useState<{ tab: HubTab; seq: number } | null>(null);
+  const [requestedStudioMode, setRequestedStudioMode] = useState<{ mode: StudioMode; seq: number } | null>(null);
+
+  // Persistent Research Share Link State
+  const [shareModalOpen, setShareModalOpen] = useState<boolean>(false);
+  const [shareBusy, setShareBusy] = useState<boolean>(false);
+  const [shareUrl, setShareUrl] = useState<string>('');
+  const [shareCopied, setShareCopied] = useState<boolean>(false);
+  const [shareError, setShareError] = useState<string>('');
+  const hasShareUrlParamRef = useRef<boolean>(
+    typeof window !== 'undefined' &&
+      /^sh-[a-z0-9]{8,24}$/i.test(new URLSearchParams(window.location.search).get('share') || '')
+  );
+  const shareUrlInputRef = useRef<HTMLInputElement | null>(null);
+
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const workspaceRef = useRef<HTMLElement | null>(null);
   const lenisRef = useRef<Lenis | null>(null);
@@ -275,6 +300,54 @@ export default function App() {
     }
   }, []);
 
+  // Keyboard shortcut (`Ctrl/Cmd + K`) for Top-Left Navigation Dashboard
+  useEffect(() => {
+    if (gameModeActive) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setDashboardOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [gameModeActive]);
+
+  // Track currently visible section for Top-Left Dashboard active state
+  useEffect(() => {
+    if (gameModeActive || typeof IntersectionObserver === 'undefined') return;
+    const sectionIds = [
+      'top',
+      'features',
+      'workspace',
+      'graph-stage',
+      'library',
+      'bioscience',
+      'intelligence-hub',
+      'media-studio',
+      'observatory-3d',
+      'showcase',
+    ];
+    const nodes = sectionIds
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => Boolean(el));
+    if (nodes.length === 0) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        if (visible[0]?.target?.id) {
+          setActiveSectionId(visible[0].target.id);
+        }
+      },
+      { rootMargin: '-20% 0px -55% 0px', threshold: [0.05, 0.25, 0.5] }
+    );
+    nodes.forEach((n) => obs.observe(n));
+    return () => obs.disconnect();
+  }, [gameModeActive]);
+
   // Sync Library from SQLite backend
   const fetchLibrary = useCallback(async (cid: string) => {
     try {
@@ -288,7 +361,7 @@ export default function App() {
       const data = (await res.json()) as LibraryItem[];
       if (Array.isArray(data)) {
         setLibrary(data);
-        if (data.length > 0) {
+        if (data.length > 0 && !hasShareUrlParamRef.current) {
           setActiveItem(data[0]);
           setStatusMessage({
             tone: 'idle',
@@ -306,6 +379,90 @@ export default function App() {
   useEffect(() => {
     void fetchLibrary(clientId);
   }, [clientId, fetchLibrary]);
+
+  // Hydrate Shared Research Briefing when visiting `?share=sh-...`
+  useEffect(() => {
+    const rawShare = new URLSearchParams(window.location.search).get('share')?.trim().toLowerCase();
+    if (!rawShare || !/^sh-[a-z0-9]{8,24}$/.test(rawShare)) return;
+
+    let cancelled = false;
+
+    const loadSharedBriefing = async () => {
+      setStatusMessage({
+        tone: 'loading',
+        text: `Loading shared research briefing (${rawShare})…`,
+      });
+
+      try {
+        const res = await fetch(`/api/shares/${encodeURIComponent(rawShare)}`);
+        if (res.ok) {
+          const data = (await res.json()) as Partial<LibraryItem> & { shareId?: string };
+          if (cancelled || !data.query || !data.summary) return;
+          const hydrated: LibraryItem = {
+            id: data.shareId || rawShare,
+            query: data.query,
+            createdAt: data.createdAt || new Date().toISOString(),
+            saved: false,
+            summary: data.summary,
+            sections: Array.isArray(data.sections) ? data.sections : [],
+            sources: Array.isArray(data.sources) ? data.sources : [],
+            graph:
+              data.graph && Array.isArray(data.graph.nodes) && Array.isArray(data.graph.edges)
+                ? data.graph
+                : { nodes: [data.query], edges: [] },
+          };
+          setActiveItem(hydrated);
+          setQueryInput(hydrated.query);
+          setStatusMessage({
+            tone: 'success',
+            text: `Loaded shared research briefing "${hydrated.query}" (${rawShare}).`,
+          });
+          window.setTimeout(() => scrollToSection('#workspace'), 220);
+          return;
+        }
+
+        // Cloud Firestore fallback if signed in and SQLite instance was cold
+        if (authReady && currentUser) {
+          const cloudShared = await fetchSharedBriefingFromCloud(rawShare).catch(() => null);
+          if (!cancelled && cloudShared) {
+            setActiveItem(cloudShared);
+            setQueryInput(cloudShared.query);
+            setStatusMessage({
+              tone: 'success',
+              text: `Loaded shared research briefing "${cloudShared.query}" from Cloud Vault.`,
+            });
+            // Re-warm SQLite cache silently
+            void fetch('/api/shares', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(cloudShared),
+            }).catch(() => {});
+            window.setTimeout(() => scrollToSection('#workspace'), 220);
+            return;
+          }
+        }
+
+        if (!cancelled && authReady) {
+          setStatusMessage({
+            tone: 'error',
+            text: `Shared research link (${rawShare}) was not found or has expired.`,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          setStatusMessage({
+            tone: 'error',
+            text: 'Could not load shared research briefing. Please check your connection.',
+          });
+        }
+      }
+    };
+
+    void loadSharedBriefing();
+    return () => {
+      cancelled = true;
+    };
+  }, [authReady, currentUser, scrollToSection]);
 
   const persistLibrary = useCallback(
     async (nextItems: LibraryItem[], cid = clientId) => {
@@ -643,6 +800,92 @@ export default function App() {
     });
   };
 
+  // Generate & Persist Unique Share Link for Current Research Briefing
+  const handleShareCurrentBriefing = async () => {
+    setShareModalOpen(true);
+    setShareBusy(true);
+    setShareError('');
+    setShareCopied(false);
+
+    try {
+      const res = await fetch('/api/shares', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: activeItem.query,
+          createdAt: activeItem.createdAt,
+          summary: activeItem.summary,
+          sections: activeItem.sections,
+          sources: activeItem.sources,
+          graph: activeItem.graph,
+        }),
+      });
+
+      const payload = (await res.json().catch(() => ({}))) as {
+        shareId?: string;
+        detail?: string;
+      };
+
+      if (!res.ok || !payload.shareId) {
+        setShareError(payload.detail || 'Could not generate shareable link.');
+        return;
+      }
+
+      const shareId = payload.shareId;
+      if (currentUser && currentUser.emailVerified) {
+        void publishSharedBriefingToCloud(currentUser, shareId, activeItem).catch(() => {
+          // Logged via handleFirestoreError
+        });
+      }
+
+      const fullUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(shareId)}`;
+      setShareUrl(fullUrl);
+      try {
+        window.history.replaceState({}, '', `?share=${encodeURIComponent(shareId)}`);
+      } catch {
+        // Ignore history restriction in sandboxed contexts
+      }
+
+      try {
+        await navigator.clipboard.writeText(fullUrl);
+        setShareCopied(true);
+        window.setTimeout(() => setShareCopied(false), 2400);
+      } catch {
+        // Clipboard permission unavailable; input selection fallback ready
+      }
+
+      setStatusMessage({
+        tone: 'success',
+        text: `Generated persistent share link (${shareId}) for "${activeItem.query}".`,
+      });
+    } catch {
+      setShareError('Network error while creating persistent share link.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const handleCopyShareUrl = async () => {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareCopied(true);
+      window.setTimeout(() => setShareCopied(false), 2200);
+    } catch {
+      shareUrlInputRef.current?.select();
+    }
+  };
+
+  const handleDashboardNavigateHubTab = (tab: HubTab) => {
+    setRequestedHubTab({ tab, seq: Date.now() });
+    scrollToSection('#intelligence-hub');
+  };
+
+  const handleDashboardNavigateStudioMode = (mode: StudioMode) => {
+    setRequestedStudioMode({ mode, seq: Date.now() });
+    scrollToSection('#media-studio');
+  };
+
   const handleExportSavedCollection = () => {
     const starred = library.filter((item) => item.saved);
     const itemsToExport =
@@ -711,19 +954,37 @@ export default function App() {
       <EarthCanvas />
 
       {/* Strict 3-Zone Top Navigation Bar (<= 56px height, single row, zero wrap) */}
-      <header className="sticky top-0 z-30 h-14 border-b border-[#96afe6]/14 bg-[#04060f]/92">
-        <div className="mx-auto flex h-full max-w-6xl items-center justify-between gap-6 px-5 sm:px-8">
-          {/* Zone 1: Brand Wordmark */}
-          <a
-            href="#top"
-            onClick={(e) => {
-              e.preventDefault();
-              scrollToSection('#top');
-            }}
-            className="text-base sm:text-lg font-bold tracking-tight text-[#f3f6ff] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5df0a8] rounded"
-          >
-            ▲ Ascend
-          </a>
+      <header className="sticky top-0 z-40 h-14 border-b border-[#96afe6]/14 bg-[#04060f]/94">
+        <div className="mx-auto flex h-full max-w-6xl items-center justify-between gap-4 px-4 sm:px-8">
+          {/* Zone 1: Top-Left Command Dashboard Trigger + Brand Wordmark */}
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => setDashboardOpen((prev) => !prev)}
+              aria-expanded={dashboardOpen}
+              aria-controls="ascend-command-dashboard"
+              title="Open Quick-Access Dashboard (Ctrl+K)"
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer ${
+                dashboardOpen
+                  ? 'border-[#5df0a8]/60 bg-[#5df0a8]/16 text-[#5df0a8]'
+                  : 'border-[#96afe6]/22 bg-[#0a1126] text-[#f3f6ff] hover:border-[#5df0a8]/45'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5 text-[#5df0a8] shrink-0" />
+              <span>Dashboard</span>
+            </button>
+
+            <a
+              href="#top"
+              onClick={(e) => {
+                e.preventDefault();
+                scrollToSection('#top');
+              }}
+              className="text-base sm:text-lg font-bold tracking-tight text-[#f3f6ff] whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5df0a8] rounded"
+            >
+              ▲ Ascend
+            </a>
+          </div>
 
           {/* Zone 2: 5 Concise Single-Line Navigation Links */}
           <nav
@@ -819,7 +1080,33 @@ export default function App() {
         </div>
       </header>
 
-      <main id="top" className="relative z-10">
+      {/* Top-Left One-Click Navigation Dashboard Drawer */}
+      <CommandDashboardDrawer
+        open={dashboardOpen}
+        pinned={dashboardPinned}
+        activeSectionId={activeSectionId}
+        activeTopic={activeItem.query}
+        libraryCount={library.length}
+        savedCount={savedCount}
+        onClose={() => {
+          setDashboardOpen(false);
+          setDashboardPinned(false);
+        }}
+        onTogglePin={() => setDashboardPinned((prev) => !prev)}
+        onNavigateSection={(selector, focusSearch) => scrollToSection(selector, focusSearch)}
+        onNavigateHubTab={handleDashboardNavigateHubTab}
+        onNavigateStudioMode={handleDashboardNavigateStudioMode}
+        onOpenShareModal={() => void handleShareCurrentBriefing()}
+        onExportCurrent={handleExportCurrent}
+        onLaunchOrbitalSim={() => setGameModeActive(true)}
+      />
+
+      <main
+        id="top"
+        className={`relative z-10 transition-[padding] duration-200 ${
+          dashboardOpen && dashboardPinned ? 'xl:pl-[324px]' : ''
+        }`}
+      >
         {/* ================================================================
             SECTION 1: HERO
         ================================================================= */}
@@ -961,6 +1248,15 @@ export default function App() {
                 >
                   <Star className={`w-3.5 h-3.5 shrink-0 ${activeIsSaved ? 'fill-[#5df0a8]' : ''}`} />
                   <span>{activeIsSaved ? 'Saved in Library' : 'Save Briefing'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleShareCurrentBriefing()}
+                  className="px-3.5 py-2 rounded-xl text-xs font-semibold border border-[#5df0a8]/40 bg-[#5df0a8]/12 hover:bg-[#5df0a8]/20 text-[#5df0a8] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  <Share2 className="w-3.5 h-3.5 shrink-0" />
+                  <span>Share</span>
                 </button>
 
                 <button
@@ -1415,12 +1711,16 @@ export default function App() {
         <ResearchAssistantHub
           activeTopic={activeItem.query}
           currentUser={currentUser}
+          requestedTab={requestedHubTab}
         />
 
         {/* ================================================================
             SECTION 6: VISUAL FIGURE & MOTION STUDIO (Nano Banana 2.1 + Omni 1.1 Flash)
         ================================================================= */}
-        <MediaStudioPanel activeTopic={activeItem.query} />
+        <MediaStudioPanel
+          activeTopic={activeItem.query}
+          requestedMode={requestedStudioMode}
+        />
 
         {/* ================================================================
             SECTION 7: INTERACTIVE 3D PBR HARDWARE OBSERVATORY
@@ -1472,7 +1772,11 @@ export default function App() {
       </main>
 
       {/* Quiet Footer with Mandatory arXiv, Semantic Scholar, UniProtKB & AlphaFold Attribution */}
-      <footer className="relative z-10 border-t border-[#96afe6]/12 bg-[#04060f]/95 py-10">
+      <footer
+        className={`relative z-10 border-t border-[#96afe6]/12 bg-[#04060f]/95 py-10 transition-[padding] duration-200 ${
+          dashboardOpen && dashboardPinned ? 'xl:pl-[324px]' : ''
+        }`}
+      >
         <div className="mx-auto max-w-6xl px-5 sm:px-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6 text-xs text-[#6b7796]">
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-bold text-[#f3f6ff]">▲ Ascend</span>
@@ -1516,6 +1820,84 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* Share Research Briefing Modal */}
+      {shareModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="share-modal-title"
+        >
+          <div className="ascend-panel w-full max-w-lg rounded-2xl p-6 flex flex-col gap-5">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-4 h-4 text-[#5df0a8] shrink-0" />
+                <h3 id="share-modal-title" className="text-base font-bold text-[#f3f6ff]">
+                  Share Research Briefing
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareModalOpen(false)}
+                aria-label="Close share dialog"
+                className="p-1.5 rounded-lg text-[#9aa6c4] hover:text-[#f3f6ff] cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <div className="text-xs text-[#6b7796]">Topic Snapshot</div>
+              <div className="text-sm font-semibold text-[#f3f6ff]">{activeItem.query}</div>
+              <p className="mt-1 text-xs text-[#9aa6c4] leading-relaxed">
+                Anyone with this persistent link can open this exact research briefing—including the executive summary, four structured sections, {activeItem.sources.length} verified citations, and the {activeItem.graph.nodes.length}-node concept graph.
+              </p>
+            </div>
+
+            {shareBusy ? (
+              <div className="py-4 flex items-center gap-2.5 text-xs text-[#5df0a8]">
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <span>Generating persistent research link…</span>
+              </div>
+            ) : shareError ? (
+              <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-400/30 text-xs text-rose-300 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{shareError}</span>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  ref={shareUrlInputRef}
+                  type="text"
+                  readOnly
+                  value={shareUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                  aria-label="Persistent share URL"
+                  className="flex-1 px-3.5 py-2.5 rounded-xl bg-[#050814] border border-[#96afe6]/22 text-xs font-mono-tabular text-[#5df0a8] focus:outline-none focus:border-[#5df0a8]"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleCopyShareUrl()}
+                  className="mint-btn-primary px-4 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  {shareCopied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 shrink-0" />
+                      <span>Copied Link</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5 shrink-0" />
+                      <span>Copy Link</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Client Vault Sync Modal */}
       {vaultModalOpen && (

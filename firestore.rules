@@ -190,6 +190,64 @@ service cloud.firestore {
         && data.createdAt is timestamp;
     }
 
+    function isValidSharedBriefing(data, shareId) {
+      return data.keys().hasAll([
+          'shareId',
+          'ownerId',
+          'query',
+          'summary',
+          'background',
+          'keyMethods',
+          'recentFindings',
+          'openQuestions',
+          'sourceLinks',
+          'conceptNodes',
+          'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'shareId',
+          'ownerId',
+          'query',
+          'summary',
+          'background',
+          'keyMethods',
+          'recentFindings',
+          'openQuestions',
+          'sourceLinks',
+          'conceptNodes',
+          'createdAt'
+        ])
+        && data.shareId is string
+        && data.shareId == shareId
+        && data.shareId.size() >= 11
+        && data.shareId.size() <= 27
+        && data.shareId.matches('^sh-[a-z0-9]{8,24}$')
+        && data.ownerId is string
+        && isValidId(data.ownerId)
+        && data.ownerId == request.auth.uid
+        && data.query is string
+        && data.query.size() >= 3
+        && data.query.size() <= 200
+        && data.summary is string
+        && data.summary.size() >= 1
+        && data.summary.size() <= 3000
+        && data.background is string
+        && data.background.size() >= 1
+        && data.background.size() <= 2400
+        && data.keyMethods is string
+        && data.keyMethods.size() >= 1
+        && data.keyMethods.size() <= 2400
+        && data.recentFindings is string
+        && data.recentFindings.size() >= 1
+        && data.recentFindings.size() <= 2400
+        && data.openQuestions is string
+        && data.openQuestions.size() >= 1
+        && data.openQuestions.size() <= 2400
+        && isBoundedStringList(data.sourceLinks, 6, 400)
+        && isBoundedStringList(data.conceptNodes, 10, 80)
+        && data.createdAt is timestamp;
+    }
+
     // =========================================================================
     // 3. COLLECTION MATCH BLOCKS
     // =========================================================================
@@ -374,6 +432,27 @@ service cloud.firestore {
 
       allow delete: if isVerifiedUser()
         && isValidId(scoreId)
+        && existing().ownerId == request.auth.uid;
+    }
+
+    // Immutable Shared Research Briefing Snapshots (Zero PII, Anti-Scraping)
+    match /shares/{shareId} {
+      allow get: if isSignedIn()
+        && isValidId(shareId)
+        && shareId.matches('^sh-[a-z0-9]{8,24}$');
+
+      allow list: if false;
+
+      allow create: if isVerifiedUser()
+        && isValidId(shareId)
+        && shareId.matches('^sh-[a-z0-9]{8,24}$')
+        && isValidSharedBriefing(incoming(), shareId)
+        && incoming().createdAt == request.time;
+
+      allow update: if false;
+
+      allow delete: if isVerifiedUser()
+        && isValidId(shareId)
         && existing().ownerId == request.auth.uid;
     }
   }

@@ -453,3 +453,120 @@ export function subscribeOrbitalLeaderboard(
     }
   );
 }
+
+// ---------------------------------------------------------------------------
+// Persistent Shared Briefing Links (`/shares/{shareId}`)
+// ---------------------------------------------------------------------------
+export async function publishSharedBriefingToCloud(
+  user: User,
+  shareIdRaw: string,
+  item: LibraryItem
+): Promise<void> {
+  if (!user.emailVerified) return;
+  const shareId = shareIdRaw.trim().toLowerCase();
+  if (!/^sh-[a-z0-9]{8,24}$/.test(shareId)) return;
+
+  const uid = sanitizeDocId(user.uid);
+  const path = `shares/${shareId}`;
+  const ref = doc(db, 'shares', shareId);
+
+  let existingSnap;
+  try {
+    existingSnap = await getDoc(ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
+  // Immutable snapshot: if already published under this content-addressed shareId, no-op
+  if (existingSnap.exists()) return;
+
+  const findSection = (title: string) =>
+    item.sections.find((s) => s.title.toLowerCase() === title.toLowerCase())?.body || '';
+
+  const sourceLinks = item.sources
+    .slice(0, 6)
+    .map((s) => `${s.title} (${s.year ?? 'n.d.'}) — ${s.url}`.slice(0, 400));
+
+  const conceptNodes = (item.graph?.nodes || [item.query])
+    .slice(0, 10)
+    .map((n) => clampString(n, 1, 80, 'Concept'));
+
+  try {
+    await setDoc(ref, {
+      shareId,
+      ownerId: uid,
+      query: clampString(item.query, 3, 200, 'Research Topic'),
+      summary: clampString(item.summary, 1, 3000),
+      background: clampString(findSection('Background'), 1, 2400),
+      keyMethods: clampString(findSection('Key methods'), 1, 2400),
+      recentFindings: clampString(findSection('Recent findings'), 1, 2400),
+      openQuestions: clampString(findSection('Open questions'), 1, 2400),
+      sourceLinks,
+      conceptNodes,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+  }
+}
+
+export async function fetchSharedBriefingFromCloud(
+  shareIdRaw: string
+): Promise<LibraryItem | null> {
+  if (!auth.currentUser) return null;
+  const shareId = shareIdRaw.trim().toLowerCase();
+  if (!/^sh-[a-z0-9]{8,24}$/.test(shareId)) return null;
+
+  const path = `shares/${shareId}`;
+  const ref = doc(db, 'shares', shareId);
+
+  let snap;
+  try {
+    snap = await getDoc(ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+
+  if (!snap.exists()) return null;
+
+  const d = snap.data();
+  const ts = d.createdAt instanceof Timestamp ? d.createdAt.toMillis() : Date.now();
+  const queryText = String(d.query || 'Shared Research Topic');
+  const conceptNodes = Array.isArray(d.conceptNodes)
+    ? d.conceptNodes.map(String)
+    : [queryText];
+  const nodes = conceptNodes.length > 0 ? conceptNodes : [queryText];
+  const edges: [string, string, string][] = nodes
+    .slice(1)
+    .map((n) => [nodes[0], n, 'encompasses']);
+
+  const sourceLinks = Array.isArray(d.sourceLinks) ? d.sourceLinks.map(String) : [];
+
+  return {
+    id: shareId,
+    query: queryText,
+    createdAt: new Date(ts).toISOString(),
+    saved: false,
+    summary: String(d.summary || ''),
+    sections: [
+      { title: 'Background', body: String(d.background || '') },
+      { title: 'Key methods', body: String(d.keyMethods || '') },
+      { title: 'Recent findings', body: String(d.recentFindings || '') },
+      { title: 'Open questions', body: String(d.openQuestions || '') },
+    ],
+    sources: sourceLinks.map((line) => {
+      const dashIdx = line.lastIndexOf(' — ');
+      const url = dashIdx !== -1 ? line.slice(dashIdx + 3).trim() : 'https://arxiv.org';
+      const title = dashIdx !== -1 ? line.slice(0, dashIdx).trim() : line;
+      return {
+        title,
+        authors: 'Shared Literature Citation',
+        year: null,
+        url,
+        source: 'Shared Snapshot',
+        why: 'Included in shared research briefing snapshot.',
+      };
+    }),
+    graph: { nodes, edges },
+  };
+}

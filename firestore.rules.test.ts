@@ -186,4 +186,25 @@ export const DIRTY_DOZEN_TEST_CASES: DirtyDozenCase[] = [
     },
     expectedOutcome: 'PERMISSION_DENIED',
   },
+  {
+    id: 13,
+    name: 'Enumerating Shared Research Links via Collection List',
+    pillar: 'Pillar 8: Anti-Scraping Link Isolation',
+    operation: 'list',
+    path: 'shares',
+    auth: { uid: 'attacker_uid', email: 'attacker@example.com', email_verified: true },
+    expectedOutcome: 'PERMISSION_DENIED',
+  },
+  {
+    id: 14,
+    name: 'Mutating Immutable Shared Briefing Snapshot',
+    pillar: 'Immutable Snapshot Locking',
+    operation: 'update',
+    path: 'shares/sh-a1b2c3d4e5f6',
+    auth: { uid: 'researcher_1', email: 'res@example.com', email_verified: true },
+    payload: {
+      summary: 'Tampered summary after link was shared',
+    },
+    expectedOutcome: 'PERMISSION_DENIED',
+  },
 ];
