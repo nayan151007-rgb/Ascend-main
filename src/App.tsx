@@ -509,17 +509,37 @@ export default function App() {
       setIsLoading(true);
       setStatusMessage({
         tone: 'loading',
-        text: `Querying arXiv & Semantic Scholar in parallel and synthesizing "${cleaned}"…`,
+        text: `Querying arXiv, Semantic Scholar & Europe PMC in parallel and synthesizing "${cleaned}"…`,
       });
 
       scrollToSection('#workspace');
 
       try {
-        const res = await fetch('/api/research', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: cleaned }),
-        });
+        let res: Response | null = null;
+        let lastFetchErr: unknown = null;
+
+        for (let attempt = 0; attempt < 2; attempt++) {
+          if (attempt > 0) {
+            await new Promise((r) => window.setTimeout(r, 700));
+          }
+          try {
+            res = await fetch('/api/research', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ query: cleaned }),
+              signal: AbortSignal.timeout(25_000),
+            });
+            if (res.status !== 502 && res.status !== 504) {
+              break;
+            }
+          } catch (fetchErr) {
+            lastFetchErr = fetchErr;
+          }
+        }
+
+        if (!res) {
+          throw lastFetchErr || new Error('Network request failed');
+        }
 
         const payload = (await res.json().catch(() => ({}))) as Partial<ResearchResult> & {
           detail?: string;
@@ -528,7 +548,11 @@ export default function App() {
         if (!res.ok) {
           setStatusMessage({
             tone: 'error',
-            text: payload.detail || `Request failed with status ${res.status}.`,
+            text:
+              payload.detail ||
+              (res.status === 504
+                ? 'Research synthesis timed out upstream. Please click Synthesize Topic to retry.'
+                : `Request failed with status ${res.status}.`),
           });
           setIsLoading(false);
           return;
@@ -566,10 +590,13 @@ export default function App() {
           tone: 'success',
           text: `Synthesized briefing with ${newItem.sources.length} verified sources and ${newItem.graph.nodes.length} concept nodes.`,
         });
-      } catch {
+      } catch (err) {
+        const isTimeout = err instanceof DOMException && err.name === 'TimeoutError';
         setStatusMessage({
           tone: 'error',
-          text: 'Could not reach the research synthesis server. Check your connection and retry.',
+          text: isTimeout
+            ? 'Synthesis request timed out waiting for upstream indices. Please retry.'
+            : 'Could not reach the research synthesis server. If you are viewing a published deployment, republish the latest build and retry.',
         });
       } finally {
         setIsLoading(false);
